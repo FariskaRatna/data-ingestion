@@ -1,0 +1,307 @@
+{
+  "case_id": "1678_K_Pid.Sus_2023",
+  "what": {
+    "case_number": "1678 K/Pid.Sus/2023",
+    "case_type": "Tindak Pidana Khusus",
+    "category": "Narkotika",
+    "charges": [
+      "Pasal 114 Ayat (1)",
+      "Pasal 112 Ayat (1)",
+      "Pasal 127 Ayat (1) huruf a",
+      "Pasal 183"
+    ],
+    "verdict_type": "Bersalah",
+    "status": "Kasasi"
+  },
+  "when": {
+    "arrest_date": "30 Mei 2023",
+    "birth_date": "10 September 1980",
+    "district_court_date": "10 November\n2022",
+    "high_court_date": "5 Januari 2023",
+    "all_dates": [
+      "10 September 1980",
+      "10 Juli 2022",
+      "3 November 2022",
+      "10 November 2022",
+      "5 Januari 2023",
+      "10 November 2022",
+      "18 Januari 2023",
+      "30 Januari 2023",
+      "30 Januari\n2023",
+      "18 Januari 2023",
+      "18 Januari 2023",
+      "30 Januari 2023",
+      "8 Juli 2022",
+      "9 Juli 2022",
+      "5 Januari 2023"
+    ]
+  },
+  "where": {
+    "residence": "Desa Rayeuk Kuta, Kecamatan Tanah Luas, Kabupaten Aceh Utara",
+    "village": "Rayeuk Kuta",
+    "district": "Tanah Luas",
+    "regency": "Aceh Utara",
+    "province": "Kabupaten Aceh Utara",
+    "district_court": "PN Banda Aceh",
+    "high_court": "PT Banda Aceh",
+    "supreme_court": "Mahkamah Agung RI"
+  },
+  "who": {
+    "defendant_name": "Halim A. bin Ali terbukti bersalah melakukan tindak pidana Narkotika sebagaimana dakwaan Kedua melanggar Pasal",
+    "birth_place": "Rayeuk Kuta",
+    "age": 41,
+    "birth_date": "10 September 1980",
+    "gender": "Laki-laki",
+    "nationality": "Indonesia",
+    "religion": "Islam",
+    "occupation": "Wiraswasta",
+    "prosecutor": {
+      "office": "Kejaksaan Negeri Banda Aceh",
+      "type": "Kejaksaan Negeri"
+    }
+  },
+  "why": {
+    "legal_basis": [
+      {
+        "number": "35",
+        "year": "2009",
+        "about": "Narkotika",
+        "full_ref": "UU No. 35 Tahun 2009"
+      }
+    ],
+    "legal_elements": [
+      "Tanpa hak",
+      "Melawan hukum",
+      "Menyalahgunakan",
+      "Memiliki",
+      "Menyimpan"
+    ]
+  },
+  "how": {
+    "evidence_types": [
+      "Barang Bukti"
+    ],
+    "legal_process": [
+      "Penangkapan",
+      "Penahanan",
+      "Penuntutan",
+      "Persidangan",
+      "Putusan PN",
+      "Kasasi"
+    ],
+    "modus_operandi": [
+      "Memiliki",
+      "Menyimpan",
+      "Menguasai"
+    ]
+  },
+  "how_much": {
+    "narcotics_weight_grams": 0.21,
+    "prison_sentence": {
+      "years": 4,
+      "months": 0
+    },
+    "fine_idr": 800000000,
+    "court_fees_idr": 2000,
+    "evidence_items": [
+      {
+        "quantity": 1,
+        "unit": "paket",
+        "description": "sabu-sabu seberat 0,21 (nol koma dua satu) gram"
+      },
+      {
+        "quantity": 1,
+        "unit": "unit",
+        "description": "handphone merek Oppo"
+      },
+      {
+        "quantity": 1,
+        "unit": "bungkus",
+        "description": "plastik berisi kristal putih dengan berat 0,21 (nol koma dua\ndikurangkan seluruhnya dari pidana yang"
+      },
+      {
+        "quantity": 1,
+        "unit": "unit",
+        "description": "handphone merek Oppo"
+      },
+      {
+        "quantity": 1,
+        "unit": "bungkus",
+        "description": "plastik berisi kristal putih dengan berat 0,21 (nol koma dua\nsatu) gram"
+      },
+      {
+        "quantity": 1,
+        "unit": "unit",
+        "description": "handphone merek Oppo"
+      },
+      {
+        "quantity": 1,
+        "unit": "bungkus",
+        "description": "plastik berisi kristal putih dengan berat 0,21 (nol koma dua\npuluh satu) gram"
+      },
+      {
+        "quantity": 1,
+        "unit": "unit",
+        "description": "handphone merek Oppo"
+      }
+    ]
+  },
+  "metadata": {
+    "extraction_version": "2.0",
+    "extraction_date": "2026-02-16T18:50:40.864261",
+    "confidence_scores": {
+      "what.case_number": {
+        "confidence": 1.0,
+        "source": "regex"
+      },
+      "what.case_type": {
+        "confidence": 0.95,
+        "source": "regex"
+      },
+      "what.category": {
+        "confidence": 0.9,
+        "source": "regex"
+      },
+      "what.charges": {
+        "confidence": 0.95,
+        "source": "regex"
+      },
+      "what.verdict_type": {
+        "confidence": 0.98,
+        "source": "regex"
+      },
+      "what.status": {
+        "confidence": 0.98,
+        "source": "regex"
+      },
+      "when.arrest_date": {
+        "confidence": 0.9,
+        "source": "regex"
+      },
+      "when.birth_date": {
+        "confidence": 0.95,
+        "source": "regex"
+      },
+      "when.district_court_date": {
+        "confidence": 0.9,
+        "source": "regex"
+      },
+      "when.high_court_date": {
+        "confidence": 0.9,
+        "source": "regex"
+      },
+      "when.all_dates": {
+        "confidence": 0.95,
+        "source": "regex"
+      },
+      "where.residence": {
+        "confidence": 0.95,
+        "source": "regex"
+      },
+      "where.village": {
+        "confidence": 0.9,
+        "source": "regex"
+      },
+      "where.district": {
+        "confidence": 0.9,
+        "source": "regex"
+      },
+      "where.regency": {
+        "confidence": 0.9,
+        "source": "regex"
+      },
+      "where.province": {
+        "confidence": 0.9,
+        "source": "regex"
+      },
+      "where.district_court": {
+        "confidence": 0.95,
+        "source": "regex"
+      },
+      "where.high_court": {
+        "confidence": 0.95,
+        "source": "regex"
+      },
+      "where.supreme_court": {
+        "confidence": 0.95,
+        "source": "regex"
+      },
+      "who.defendant_name": {
+        "confidence": 0.95,
+        "source": "regex"
+      },
+      "who.birth_place": {
+        "confidence": 0.9,
+        "source": "regex"
+      },
+      "who.age": {
+        "confidence": 0.98,
+        "source": "regex"
+      },
+      "who.birth_date": {
+        "confidence": 0.95,
+        "source": "regex"
+      },
+      "who.gender": {
+        "confidence": 0.99,
+        "source": "regex"
+      },
+      "who.nationality": {
+        "confidence": 0.95,
+        "source": "regex"
+      },
+      "who.religion": {
+        "confidence": 0.95,
+        "source": "regex"
+      },
+      "who.occupation": {
+        "confidence": 0.9,
+        "source": "regex"
+      },
+      "who.prosecutor": {
+        "confidence": 0.9,
+        "source": "regex"
+      },
+      "why.legal_basis": {
+        "confidence": 0.95,
+        "source": "regex"
+      },
+      "why.legal_elements": {
+        "confidence": 0.85,
+        "source": "regex"
+      },
+      "how.evidence_types": {
+        "confidence": 0.9,
+        "source": "regex"
+      },
+      "how.legal_process": {
+        "confidence": 0.85,
+        "source": "regex"
+      },
+      "how.modus_operandi": {
+        "confidence": 0.75,
+        "source": "regex"
+      },
+      "how_much.narcotics_weight_grams": {
+        "confidence": 0.95,
+        "source": "regex"
+      },
+      "how_much.prison_sentence": {
+        "confidence": 0.95,
+        "source": "regex"
+      },
+      "how_much.fine_idr": {
+        "confidence": 0.95,
+        "source": "regex"
+      },
+      "how_much.court_fees_idr": {
+        "confidence": 0.9,
+        "source": "regex"
+      },
+      "how_much.evidence_items": {
+        "confidence": 0.85,
+        "source": "regex"
+      }
+    }
+  }
+}
