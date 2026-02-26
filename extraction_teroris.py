@@ -927,72 +927,78 @@ class ImprovedCourtDecisionExtractor:
             self.log("  ❌ Defendant Names: NOT FOUND")
 
         # JUDGES
+        # ============================================================
         judges = {}
 
         # Hakim Ketua
         ketua_match = re.search(
-            r'Hakim\s+Ket(?:ua)?\b[^,\n]*?[,\s]+([A-Z][A-Za-z\s\.,]+?(?:S\.?\s*H\.?|M\.?\s*H(?:um)?\.?)[A-Za-z\s\.,]*?)(?=\s+(?:dan|sebagai|yang|\n))',
+            r'oleh\s+Kami\s+([A-Z][A-Za-z\s\.,]+?(?:S\.?\s*H\.?|M\.?\s*H(?:um)?\.?)[A-Za-z\s\.,]*?)'
+            r'\s+selaku\s+Hakim\s+Ketua',
             self.text, re.IGNORECASE
         )
         if ketua_match:
             judges['ketua'] = ' '.join(ketua_match.group(1).split()).rstrip(',')
             self.log(f"  ✅ Hakim Ketua: {judges['ketua']}")
 
-        # Hakim Anggota
-        anggota_matches = re.findall(
-            r'([A-Z][A-Za-z\s\.,]+?(?:S\.?\s*H\.?|M\.?\s*H(?:um)?\.?)[A-Za-z\s\.,]*?)'
-            r'(?=\s+(?:masing-masing\s+sebagai\s+)?Hakim\s+Anggota)',
+        # Hakim Anggota - ambil nama sebelum "masing-masing sebagai Hakim Anggota"
+        anggota_match = re.search(
+            r'((?:[A-Z][A-Za-z\s\.,]+?(?:S\.?\s*H\.?|M\.?\s*H(?:um)?\.?)[A-Za-z\s\.,]*?)'
+            r'(?:\s+dan\s+[A-Z][A-Za-z\s\.,]+?(?:S\.?\s*H\.?|M\.?\s*H(?:um)?\.?)[A-Za-z\s\.,]*?)?)'
+            r'\s+masing-masing\s+sebagai\s+Hakim\s+Anggota',
             self.text, re.IGNORECASE
         )
-        if anggota_matches:
-            judges['anggota'] = [' '.join(a.split()).rstrip(',') for a in anggota_matches]
+        if anggota_match:
+            raw = anggota_match.group(1)
+            anggota_list = re.split(r'\s+dan\s+', raw)
+            judges['anggota'] = [' '.join(a.split()).rstrip(',') for a in anggota_list if a.strip()]
             self.log(f"  ✅ Hakim Anggota: {judges['anggota']}")
-
-        # Fallback: ambil semua nama setelah "Hakim Ketua ... dan"
-        if not judges:
-            fallback = re.search(
-                r'(?:oleh\s+)?Hakim\s+Ketua[,\s]+([A-Z][A-Za-z\s\.,]+?)'
-                r'(?:\s+dan\s+([A-Z][A-Za-z\s\.,]+?))?'
-                r'(?=\s+(?:masing-masing|yang\s+diucapkan|dalam\s+sidang|\n))',
-                self.text, re.IGNORECASE
-            )
-            if fallback:
-                judges['ketua'] = ' '.join(fallback.group(1).split()).rstrip(',')
-                if fallback.group(2):
-                    judges['anggota'] = [' '.join(fallback.group(2).split()).rstrip(',')]
 
         if judges:
             self._add_field("who", "judges", judges, 0.9)
 
+        # ============================================================
         # CLERK (Panitera Pengganti)
+        # ============================================================
         clerk_match = re.search(
-            r'Panitera\s+(?:Pengganti\s+)?(?:pada\s+)?(?:Pengadilan[^,\n]+,\s*)?'
-            r'([A-Z][A-Za-z\s\.,]+?(?:S\.?\s*H\.?)?)'
-            r'(?=\s*(?:;|,|\n|dalam\s+sidang))',
+            r'dibantu\s+oleh\s+([A-Z][A-Za-z\s\.,]+?(?:S\.?\s*H\.?|M\.?\s*H(?:um)?\.?)[A-Za-z\s\.,]*?)'
+            r'\s+Panitera\s+Pengganti',
             self.text, re.IGNORECASE
         )
+        if not clerk_match:
+            # Fallback: ambil nama setelah "Panitera Pengganti," di blok tanda tangan
+            clerk_match = re.search(
+                r'Panitera\s+Pengganti\s*,\s*\n\s*([A-Z][A-Za-z\s\.,]+?(?:S\.?\s*H\.?))',
+                self.text, re.IGNORECASE
+            )
         if clerk_match:
             clerk = ' '.join(clerk_match.group(1).split()).rstrip(',.')
-            self._add_field("who", "clerk", clerk, 0.85)
+            self._add_field("who", "clerk", clerk, 0.9)
             self.log(f"  ✅ Clerk: {clerk}")
 
-        # PROSECUTORS (JPU)
-        prosecutor_names = re.findall(
-            r'(?:Jaksa\s+Penuntut\s+Umum|JPU|Penuntut\s+Umum)[^:]*?[:\-]?\s*'
-            r'([A-Z][A-Za-z\s\.,]+?(?:S\.?\s*H\.?)?)'
-            r'(?=\s*(?:,\s*S\.H|;|\n|dan\s+[A-Z]|pada\s+Kejaksaan))',
+        # ============================================================
+        # PROSECUTORS
+        # ============================================================
+        prosecutor_match = re.search(
+            r'dihadiri\s+oleh\s+([A-Z][A-Za-z\s\.,]+?(?:S\.?\s*H\.?)?[A-Za-z\s\.,]*?)'
+            r'\s+(?:selaku\s+)?Penuntut\s+Umum',
             self.text, re.IGNORECASE
         )
-        office_match = re.search(
-            r'(?:Jaksa\s+Penuntut\s+Umum|Penuntut\s+Umum)\s+pada\s+(Kejaksaan[^,;\n]+)',
-            self.text, re.IGNORECASE
-        )
-        prosecutors = {
-            "names": [' '.join(n.split()).rstrip(',') for n in prosecutor_names] if prosecutor_names else [],
-            "office": ' '.join(office_match.group(1).split()) if office_match else None
-        }
-        if prosecutors["names"] or prosecutors["office"]:
-            self._add_field("who", "prosecutors", prosecutors, 0.85)
+        if prosecutor_match:
+            names_raw = prosecutor_match.group(1)
+            names = re.split(r'\s*,\s*|\s+dan\s+', names_raw)
+            prosecutors = {
+                "names": [' '.join(n.split()).rstrip(',') for n in names if n.strip()],
+                "office": None
+            }
+            # Cari office
+            office_match = re.search(
+                r'(?:Jaksa\s+Penuntut\s+Umum|Penuntut\s+Umum)\s+pada\s+(Kejaksaan[^,;\n]+)',
+                self.text, re.IGNORECASE
+            )
+            if office_match:
+                prosecutors["office"] = ' '.join(office_match.group(1).split())
+
+            self._add_field("who", "prosecutors", prosecutors, 0.9)
             self.log(f"  ✅ Prosecutors: {prosecutors}")
 
         # DEFENSE COUNSELS
