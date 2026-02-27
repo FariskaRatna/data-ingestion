@@ -54,9 +54,9 @@ class ImprovedCourtDecisionExtractor:
             "when": {},
             "where": {},
             "who": {},
-            # "why": {},
-            # "how": {},
-            # "how_much": {},
+            "why": {},
+            "how_much": {},
+            "how_many": {},
             "metadata": {
                 "extraction_version": "2.0",
                 "extraction_date": datetime.now().isoformat(),
@@ -79,24 +79,45 @@ class ImprovedCourtDecisionExtractor:
         if self.verbose:
             print(message)
 
+    def _extract_dakwaan_block(self):
+        match = re.search(
+            r'(Dakwaan.*?)(?=Tuntutan|Menimbang|MENGADILI|\Z)',
+            self.text,
+            re.IGNORECASE | re.DOTALL
+        )
+        return match.group(1) if match else ""
+
     # ========= WHAT =========
     def extract_what(self):
         """Extract WHAT with improved patterns"""
         self.log("\n1. EXTRACTING WHAT...")
 
         patterns = [
-            r'Nomor\s*:?\s*([0-9]+/[A-Za-z0-9.\-/ ]+)',
-            r'Perkara\s+Nomor\s*:?\s*([0-9]+/[A-Za-z0-9.\-/ ]+)'
+            r'(?:PUTUSAN|Nomor|No)\s*[:\.]?\s*(\d+[\s\w\.]*/[\s\w\.\-/]+)',
+            r'(?:Perkara|Nomor)\s*[:\.]?\s*(\d+[\d\s\w\.\-/]{10,80})'
         ]
+        
+        header_text = self.text[:1000]
 
         for pattern in patterns:
-            match = re.search(pattern, self.text, re.IGNORECASE)
+            match = re.search(pattern, header_text, re.IGNORECASE | re.MULTILINE)
             if match:
                 case_num = match.group(1).strip()
-                self.data["case_id"] = case_num.replace(" ", "_").replace("/", "_")
-                self._add_field("what", "case_number", case_num, 1.0)
-                self.log(f"  ✅ Case Number: {case_num}")
-                break
+                
+                case_num = re.sub(r'\s+', ' ', case_num)
+                
+                for stop_word in ['DEMI', 'PENGADILAN', 'MENGADILI', 'Telah', 'Berdasarkan']:
+                    if stop_word in case_num:
+                        case_num = case_num.split(stop_word)[0]
+                
+                case_num = case_num.strip().rstrip('.,- ')
+
+                if '/' in case_num:
+                    self.data["case_id"] = re.sub(r'[\s\./\-]+', '_', case_num).strip('_')
+                    
+                    self._add_field("who", "case_number", case_num, 1.0)
+                    self.log(f"  ✅ Case Number: {case_num}")
+                    break
 
         # court name
         court_patterns = [
@@ -142,7 +163,7 @@ class ImprovedCourtDecisionExtractor:
                 self.log(f"  ✅ Indictment Model (window): {model}")
                 break
 
-        # charged articles
+        # charged articles - check ulang
         charges = []
 
         pattern1 = r'Pasal\s+(\d+)\s+(?:Ayat\s+\((\d+)\)\s*)?(?:huruf\s+([a-z]))?\s*(?:jo\.|juncto)?'
@@ -221,45 +242,71 @@ class ImprovedCourtDecisionExtractor:
 
         # evidence items
         evidence_items = []
+        stop_keywords = r'Dirampas|Dikembalikan|Menimbang|Tetap|Barang|Memutuskan'
+
         item_patterns = [
-            r'(\d+)\s+\([^\)]+\)\s+(unit|paket|bungkus|buah|lembar)\s+([^;\.]+)',
-            r'(\d+)\s+(unit|paket|bungkus|buah|lembar)\s+([^;\.]+)'
+            # Regex yang lebih cerdas untuk mendeteksi batas akhir deskripsi
+            r'(\d+)\)\s+(\d+)\s+(?:\([^\)]+\)\s+)?(unit|paket|bungkus|buah|lembar|paspor|buku)\s+([\s\S]*?)(?=\n\s*\d+\)|\n\s*(?:' + stop_keywords + r')|$)'
         ]
-        
+
         for pattern in item_patterns:
             for match in re.finditer(pattern, self.text, re.IGNORECASE):
+                # Membersihkan deskripsi
+                raw_description = match.group(4)
+                
+                # Bersihkan newline dan spasi ganda
+                clean_description = re.sub(r'\s+', ' ', raw_description).strip()
+                
+                # Menghapus titik di akhir deskripsi jika ada agar lebih rapi
+                clean_description = clean_description.rstrip('.')
+
                 item = {
-                    "quantity": int(match.group(1)),
-                    "unit": match.group(2).lower(),
-                    "description": match.group(3).strip()[:100]
+                    # "index": match.group(1),
+                    "quantity": int(match.group(2)),
+                    "unit": match.group(3).lower(),
+                    "description": clean_description[:200]
                 }
-                evidence_items.append(item)
-        
+                
+                if item not in evidence_items:
+                    evidence_items.append(item)
+
         if evidence_items:
-            self._add_field("what", "evidence_items", evidence_items[:10], 0.85)
+            self._add_field("what", "evidence_items", evidence_items, 0.85)
             self.log(f" ✅ Evidence Items: {len(evidence_items)} items found")
 
         # evidence disposition
         evidence_disposition = []
-        disposition_pattern = [
-            r'(\d+\s*\([^)]+\)\s*\w+\s+[^\.]+)\.\s*(?:Barang\s+Bukti\s+)?(dikembalikan|dirampas|dimusnahkan)',
-        ]
+        status_keywords = r'(dirampas untuk dimusnahkan|dikembalikan ke pada terdakwa|dirampas untuk negara|dimusnahkan|dipergunakan dalam perkara lain|tetap terlampir dalam berkas perkara)'
 
-        for pattern in disposition_pattern:
-            for match in re.finditer(pattern, self.text, re.IGNORECASE):
-                item = match.group(1).strip()
-                disposition = match.group(2).lower()
+        segments = re.split(status_keywords, self.text, flags=re.IGNORECASE)
 
-                evidence_disposition.append({
-                    "unit": item,
-                    "disposition": disposition
-                })
+        for i in range(0, len(segments) - 1, 2):
+            full_block = segments[i]
+            current_status = segments[i+1].strip().lower()
+            
+            header_pattern = r'barang\s+bukti[\s\S]+?sebagai\s+berikut\s*[:\.]'
+            header_match = re.search(header_pattern, full_block, re.IGNORECASE)
+            
+            if header_match:
+                list_text = full_block[header_match.end():]
+            else:
+                list_text = full_block
 
-            if evidence_disposition:
-                self._add_field("what", "evidence_disposition", evidence_disposition, 0.95)
-                self.log(f"  ✅ Evidence Disposition: {len(evidence_disposition)} items found")
+            item_matches = re.finditer(r'(\d+)\)\s+([\s\S]+?)(?=\s+\d+\)|$)', list_text)
+            
+            for m in item_matches:
+                desc = re.sub(r'\s+', ' ', m.group(2)).strip().rstrip('.')
+                
+                if len(desc) > 3 and not desc.lower().startswith(("bahwa", "menimbang", "kuhp")):
+                    evidence_disposition.append({
+                        "unit": desc,
+                        "disposition": current_status
+                    })
 
-        
+        if evidence_disposition:
+            self._add_field("what", "evidence_disposition", evidence_disposition, 0.95)
+            self.log(f" ✅ Evidence Disposition: {len(evidence_disposition)} items found")
+
         # defense plea
         plea_pattern = r'(pembelaan|pleidoi|nota\s+pembelaan).*?(?=menimbang)'
         plea_section = re.search(plea_pattern, self.text, re.IGNORECASE | re.DOTALL)
@@ -300,22 +347,26 @@ class ImprovedCourtDecisionExtractor:
             self.log(f"  ✅ Aggravating: {aggravating}")
 
         mitigating_match = re.search(
-            r'keadaan\s+yang\s+meringankan\s*:?\s*(.*?)(?=\bMenimbang\b|\bMemperhatikan\b|\bMengingat\b)',
+            r'keadaan\s+yang\s+meringankan\s*[:\-\s]*(.*?)(?=\bkeadaan\s+yang\s+memberatkan\b|\bMenimbang\b|\bMemperhatikan\b|\bMengingat\b|\bMemutuskan\b)',
             self.text,
             re.IGNORECASE | re.DOTALL
         )
 
         if mitigating_match:
-            block = mitigating_match.group(1)
+            block = mitigating_match.group(1).strip()
             
-            # Split per baris, bersihkan tiap item
-            mitigating = [
-                re.sub(r'\s+', ' ', item).strip().rstrip(';')
-                for item in block.split('\n')
-                if item.strip()
-            ]
+            raw_items = re.split(r'\n|(?:\s*[\-\u2022\d\.]+\s+)', block)
+            
+            mitigating = []
+            for item in raw_items:
+                clean_item = re.sub(r'\s+', ' ', item).strip().rstrip(';.,')
+                
+                if len(clean_item) > 5:
+                    mitigating.append(clean_item)
 
-        self._add_field("what", "mitigating_factors", mitigating, 0.95)
+            if mitigating:
+                self._add_field("why", "mitigating_factors", mitigating, 0.95)
+                self.log(f" ✅ Mitigating Factors: {len(mitigating)} found")
 
         # related entities
         entities_pattern = [
@@ -926,132 +977,7 @@ class ImprovedCourtDecisionExtractor:
         else:
             self.log("  ❌ Defendant Names: NOT FOUND")
 
-        # JUDGES
-        # ============================================================
-        judges = {}
-
-        # Hakim Ketua
-        ketua_match = re.search(
-            r'oleh\s+Kami\s+([A-Z][A-Za-z\s\.,]+?(?:S\.?\s*H\.?|M\.?\s*H(?:um)?\.?)[A-Za-z\s\.,]*?)'
-            r'\s+selaku\s+Hakim\s+Ketua',
-            self.text, re.IGNORECASE
-        )
-        if ketua_match:
-            judges['ketua'] = ' '.join(ketua_match.group(1).split()).rstrip(',')
-            self.log(f"  ✅ Hakim Ketua: {judges['ketua']}")
-
-        # Hakim Anggota - ambil nama sebelum "masing-masing sebagai Hakim Anggota"
-        anggota_match = re.search(
-            r'((?:[A-Z][A-Za-z\s\.,]+?(?:S\.?\s*H\.?|M\.?\s*H(?:um)?\.?)[A-Za-z\s\.,]*?)'
-            r'(?:\s+dan\s+[A-Z][A-Za-z\s\.,]+?(?:S\.?\s*H\.?|M\.?\s*H(?:um)?\.?)[A-Za-z\s\.,]*?)?)'
-            r'\s+masing-masing\s+sebagai\s+Hakim\s+Anggota',
-            self.text, re.IGNORECASE
-        )
-        if anggota_match:
-            raw = anggota_match.group(1)
-            anggota_list = re.split(r'\s+dan\s+', raw)
-            judges['anggota'] = [' '.join(a.split()).rstrip(',') for a in anggota_list if a.strip()]
-            self.log(f"  ✅ Hakim Anggota: {judges['anggota']}")
-
-        if judges:
-            self._add_field("who", "judges", judges, 0.9)
-
-        # ============================================================
-        # CLERK (Panitera Pengganti)
-        # ============================================================
-        clerk_match = re.search(
-            r'dibantu\s+oleh\s+([A-Z][A-Za-z\s\.,]+?(?:S\.?\s*H\.?|M\.?\s*H(?:um)?\.?)[A-Za-z\s\.,]*?)'
-            r'\s+Panitera\s+Pengganti',
-            self.text, re.IGNORECASE
-        )
-        if not clerk_match:
-            # Fallback: ambil nama setelah "Panitera Pengganti," di blok tanda tangan
-            clerk_match = re.search(
-                r'Panitera\s+Pengganti\s*,\s*\n\s*([A-Z][A-Za-z\s\.,]+?(?:S\.?\s*H\.?))',
-                self.text, re.IGNORECASE
-            )
-        if clerk_match:
-            clerk = ' '.join(clerk_match.group(1).split()).rstrip(',.')
-            self._add_field("who", "clerk", clerk, 0.9)
-            self.log(f"  ✅ Clerk: {clerk}")
-
-        # ============================================================
-        # PROSECUTORS
-        # ============================================================
-        prosecutor_match = re.search(
-            r'dihadiri\s+oleh\s+([A-Z][A-Za-z\s\.,]+?(?:S\.?\s*H\.?)?[A-Za-z\s\.,]*?)'
-            r'\s+(?:selaku\s+)?Penuntut\s+Umum',
-            self.text, re.IGNORECASE
-        )
-        if prosecutor_match:
-            names_raw = prosecutor_match.group(1)
-            names = re.split(r'\s*,\s*|\s+dan\s+', names_raw)
-            prosecutors = {
-                "names": [' '.join(n.split()).rstrip(',') for n in names if n.strip()],
-                "office": None
-            }
-            # Cari office
-            office_match = re.search(
-                r'(?:Jaksa\s+Penuntut\s+Umum|Penuntut\s+Umum)\s+pada\s+(Kejaksaan[^,;\n]+)',
-                self.text, re.IGNORECASE
-            )
-            if office_match:
-                prosecutors["office"] = ' '.join(office_match.group(1).split())
-
-            self._add_field("who", "prosecutors", prosecutors, 0.9)
-            self.log(f"  ✅ Prosecutors: {prosecutors}")
-
-        # DEFENSE COUNSELS
-        defense_block = re.search(
-            r'(?:Penasihat\s+Hukum|Kuasa\s+Hukum|Pengacara|Advokat)[^:]*?[:\-]?\s*'
-            r'((?:[A-Z][A-Za-z\s\.,]+?(?:S\.?\s*H\.?)?'
-            r'(?:\s*,\s*|\s+dan\s+))+[A-Z][A-Za-z\s\.,]+?)'
-            r'(?=\s*(?:;|\n\n|dari\s+|berkantor))',
-            self.text, re.IGNORECASE | re.DOTALL
-        )
-        if defense_block:
-            raw = defense_block.group(1)
-            counsels = re.split(r'\s*(?:,\s*|\s+dan\s+)(?=[A-Z])', raw)
-            defense_counsels = [' '.join(c.split()).rstrip(',') for c in counsels if c.strip()]
-            self._add_field("who", "defense_counsels", defense_counsels, 0.85)
-            self.log(f"  ✅ Defense Counsels: {defense_counsels}")
-
-        # INVESTIGATORS
-        investigator_match = re.search(
-            r'\b(Densus\s*88|Detasemen\s+Khusus\s+88|BNPT|Polri|Polda\s+[A-Za-z\s]+|'
-            r'Polres\s+[A-Za-z\s]+|Bareskrim|Satgas\s+[A-Za-z\s]+)\b',
-            self.text, re.IGNORECASE
-        )
-        if investigator_match:
-            investigator = ' '.join(investigator_match.group(1).split())
-            self._add_field("who", "investigators", investigator, 0.85)
-            self.log(f"  ✅ Investigators: {investigator}")
-
-        # WITNESSES
-        witness_block = re.search(
-            r'SAKSI\s+(?:BAGI\s+TERDAKWA|[A-Z]+)[:\s]*\n(.*?)(?=\n\n|\Z)',
-            self.text, re.IGNORECASE | re.DOTALL
-        )
-        if witness_block:
-            raw = witness_block.group(1)
-            witnesses = re.findall(r'\d+\.\s*([A-Z][A-Za-z\s\.]+?)(?=\s*\d+\.|\s*;|\n\n|\Z)', raw)
-            if witnesses:
-                witnesses_clean = [' '.join(w.split()).rstrip(',;') for w in witnesses]
-                self._add_field("who", "witnesses", witnesses_clean, 0.8)
-                self.log(f"  ✅ Witnesses: {witnesses_clean}")
-
-        # CO-DEFENDANTS
-        co_defendant_matches = re.findall(
-            r'(?:penuntutan\s+terpisah|berkas\s+terpisah)[^A-Z]*'
-            r'([A-Z][A-Z\s]+(?:\s+[Aa]ls?\s+[A-Z][A-Za-z\s]+)*)',
-            self.text, re.IGNORECASE
-        )
-        if co_defendant_matches:
-            co_defendants = [' '.join(c.split()).rstrip(',;') for c in co_defendant_matches]
-            self._add_field("who", "co_defendants", co_defendants, 0.8)
-            self.log(f"  ✅ Co-Defendants: {co_defendants}")
-
-        # EXISTING: Birth place, age, birth date, prosecutor office
+        # EXISTING: Birth place, age, birth date
         birth_patterns = [
             r'Tempat\s+Lahir\s*[:\-]?\s*([^;\n]+?)(?=Umur|Tanggal\s+Lahir|;|\n)',
             r'lahir\s+di\s+([A-Za-z\s]+?)(?:,|\s+pada)'
@@ -1073,6 +999,452 @@ class ImprovedCourtDecisionExtractor:
             self._add_field("who", "birth_date", age_match.group(2), 0.95)
             self.log(f"  ✅ Age: {age_match.group(1)}, DOB: {age_match.group(2)}")
 
+        # JUDGES
+        judges = {}
+
+        # Hakim Ketua
+        ketua_match = re.search(
+            r'(?:oleh\s+Kami\s+|oleh\s+)'
+            r'([A-Z][A-Za-z\s\.,]+?(?:S\.?\s*H\.?|M\.?\s*H(?:um)?\.?)'
+            r'(?:,?\s*M\.?\s*[A-Za-z\.]+?)?)'
+            r',?\s+(?:selaku|sebagai)\s+Hakim\s+Ketua',
+            self.text, re.IGNORECASE
+        )
+        if ketua_match:
+            judges['ketua'] = ' '.join(ketua_match.group(1).split()).rstrip(',')
+            self.log(f"  ✅ Hakim Ketua: {judges['ketua']}")
+
+        # Hakim Anggota - ambil nama sebelum "masing-masing sebagai Hakim Anggota"
+        anggota_match = re.search(
+            r'(?:selaku|sebagai)\s+Hakim\s+Ketua[,\s\n]+' 
+            r'([A-Z][A-Za-z\s\.,]+?(?:S\.?\s*H\.?)'       
+            r'(?:,?\s*M\.?\s*[A-Za-z\.]+?)?)'
+            r'\s+dan\s+'
+            r'([A-Z][A-Za-z\s\.,]+?(?:S\.?\s*H\.?)'       
+            r'(?:,?\s*M\.?\s*[A-Za-z\.]+?)?)'
+            r'[,\s\n]+masing-masing\s+sebagai\s+Hakim\s+Anggota',
+            self.text, re.IGNORECASE | re.DOTALL
+        )
+        if anggota_match:
+            judges['anggota'] = [
+                ' '.join(anggota_match.group(1).split()).rstrip(','),
+                ' '.join(anggota_match.group(2).split()).rstrip(','),
+            ]
+            self.log(f"  ✅ Hakim Anggota: {judges['anggota']}")
+
+        if judges:
+            self._add_field("who", "judges", judges, 0.9)
+
+        # CLERK (Panitera Pengganti)
+        clerk_match = re.search(
+            r'dibantu\s+oleh\s+([A-Z][A-Za-z\s\.,]+?(?:S\.?\s*H\.?|M\.?\s*H(?:um)?\.?)[A-Za-z\s\.,]*?)'
+            r'\s+Panitera\s+Pengganti',
+            self.text, re.IGNORECASE
+        )
+        if not clerk_match:
+            clerk_match = re.search(
+                r'Panitera\s+Pengganti\s*,\s*\n\s*([A-Z][A-Za-z\s\.,]+?(?:S\.?\s*H\.?))',
+                self.text, re.IGNORECASE
+            )
+        if clerk_match:
+            clerk = ' '.join(clerk_match.group(1).split()).rstrip(',.')
+            self._add_field("who", "clerk", clerk, 0.9)
+            self.log(f"  ✅ Clerk: {clerk}")
+
+        # PROSECUTORS
+        prosecutor_match = re.search(
+            r'dihadiri\s+oleh\s+'
+            r'([A-Z][A-Za-z\s\.,]+?(?:S\.?\s*H\.?|M\.?\s*H(?:um)?\.?)'
+            r'(?:,?\s*M\.?\s*[A-Za-z\.]+?)?)'
+            r'\s+(?:selaku\s+)?Penuntut\s+Umum',
+            self.text, re.IGNORECASE
+        )
+        if prosecutor_match:
+            name = ' '.join(prosecutor_match.group(1).split()).rstrip(',')
+            # Cari office
+            office_patterns = [
+                r'Jaksa\s+Penuntut\s+Umum\s+pada\s+Kejaksaan\s+Negeri\s+([A-Za-z\s]+?)(?=[,;\n])',
+                r'Penuntut\s+Umum\s+pada\s+Kejaksaan\s+Negeri\s+([A-Za-z\s]+?)(?=[,;\n])',
+                r'Kejaksaan\s+Negeri\s+([A-Za-z\s]+?)(?=[,;\n])',
+            ]
+
+            office = None
+            for pattern in office_patterns:
+                match = re.search(pattern, self.text, re.IGNORECASE)
+                if match:
+                    office = match.group(1).split()
+                    office = 'Kejaksaan Negeri ' + ' '.join(office)
+                    break
+
+            prosecutors = {
+                "names": [name],
+                "office": office
+            }
+
+            self._add_field("who", "prosecutors", prosecutors, 0.9)
+            self.log(f"  ✅ Prosecutors: {prosecutors}")
+
+        # DEFENSE COUNSELS
+        defense_patterns = [
+            r'(?:Terdakwa.*?didampingi(?:\s+oleh)?|Penasihat\s+Hukum\s+Terdakwa\s+adalah)'
+            r'\s+(?:oleh\s+)?(?:Tim\s+)?Penasihat\s+Hukum(?:nya)?'
+            r'(?:\s+dari)?\s+'
+            r'([A-Z][A-Za-z\s\-\']+'
+            r'(?:,\s*(?:S\.?\s*H\.?|M\.?\s*H(?:um)?\.?|SH\.?|MH\.?))*'
+            r')'
+            r'(?=\s*(?:DKK\.?|dkk\.?|dan\s+kawan-kawan|dan\s+rekan|,|;|\n|berdasarkan|yang|Penuntut|Pengadilan|$))',
+
+            r'Penasihat\s+Hukum(?:nya)?'
+            r'(?:\s+dari)?\s+'
+            r'([A-Z][A-Za-z\s\-\']+'
+            r'(?:,\s*(?:S\.?\s*H\.?|M\.?\s*H(?:um)?\.?|SH\.?|MH\.?))*'
+            r')'
+            r'(?=\s*(?:DKK\.?|dkk\.?|dan\s+kawan-kawan|dan\s+rekan|,|;|\n|berdasarkan|yang|Penuntut|Pengadilan|$))',
+
+            r'didampingi(?:\s+oleh)?\s+(?:Tim\s+)?Penasihat\s+Hukum(?:nya)?'
+            r'(?:\s+dari)?\s+'
+            r'([A-Z][A-Za-z\s\-\']+'
+            r'(?:,\s*(?:S\.?\s*H\.?|M\.?\s*H(?:um)?\.?|SH\.?|MH\.?))*'
+            r')'
+            r'(?=\s*(?:DKK\.?|dkk\.?|,|;|\n|berdasarkan|yang|$))',
+        ]
+
+        defense_counsels = []
+
+        for pattern in defense_patterns:
+            for match in re.finditer(pattern, self.text, re.IGNORECASE):
+                name = ' '.join(match.group(1).split()).rstrip(',')
+
+                is_team = bool(re.search(
+                    r'(?:DKK|dkk|dan\s+kawan-kawan|dan\s+rekan)',
+                    self.text[match.end():match.end()+20],
+                    re.IGNORECASE
+                ))
+
+                if is_team:
+                    name += ' (dkk)'
+
+                defense_counsels = [name]
+                break
+            
+        if defense_counsels:
+            self._add_field("who", "defense_counsels", defense_counsels, 0.8)
+            self.log(f" ✅ Defense Counsels: {defense_counsels}")
+        else:
+            self.log(" Defense Counsels; tidak ditemukan")
+
+        # INVESTIGATORS
+        investigator_match = re.search(
+            r'\b('
+            r'Densus\s*88(?:\s+Anti\s+Teror(?:\s+Polri)?)?|'
+            r'Detasemen\s+Khusus\s*88|'
+            r'BNPT|'
+            r'Bareskrim(?:\s+Polri)?|'
+            r'Direktorat\s+Tindak\s+Pidana\s+[A-Za-z\s]+|'
+            r'Dittipid\w+|'
+            r'Satgas\s+[A-Za-z\s]+|'
+            r'Polda\s+[A-Z][A-Za-z]+|'
+            r'Polres\s+[A-Z][A-Za-z]+|'
+            r'Kepolisian\s+Negara\s+Republik\s+Indonesia|'
+            r'Polri'
+            r')\b',
+            self.text,
+            re.IGNORECASE
+        )
+        if investigator_match:
+            investigator = ' '.join(investigator_match.group(1).split())
+            self._add_field("who", "investigators", investigator, 0.85)
+            self.log(f"  ✅ Investigators: {investigator}")
+
+        # WITNESSES
+        witness_pattern = re.compile(
+            r'\bSaksi\s+'
+            r'(?:I|II|III|IV|V|VI|VII|VIII|IX|X|\d+)?'      
+            r'\s*[:\-]?\s*'
+            r'([A-Z][A-Za-z\s\.\']{2,100}?)'              
+            r'(?=\s*,?\s*(?:di\s+bawah\s+sumpah|'
+            r'menerangkan|'
+            r'yang\s+pada\s+pokoknya|'
+            r'memberikan\s+keterangan))',
+            re.IGNORECASE
+        )
+
+        witnesses = witness_pattern.findall(self.text)
+
+        if witnesses:
+            witness = []
+            for w in witnesses:
+                name = ' '.join(w.split()).rstrip(',;.')
+
+                if not re.search(r'\b(Menetapkan |Membebankan|Mengadili|Menjatuhkan)\b', name, re.IGNORECASE):
+                    if 2 <= len(name.split()) <= 6:
+                        witness.append(name)
+
+                if witness:
+                    self._add_field("who", "witnesses", list(set(witness)), 0.85)
+                    self._add_field("how_many", "witness_count", len(list(set(witness))), 0.95)
+                    self.log(f" ✅ Witnesses: {witness}")
+
+        # CO-DEFENDANTS
+        co_defendant_pattern = (
+            r'bersama-sama\s+dengan\s+'
+            r'([\s\S]+?)' 
+            r'\s*\(\s*masing-masing\s+[\s\S]*?terpisah\s*\)'
+        )
+
+        match = re.search(co_defendant_pattern, self.text, re.IGNORECASE)
+
+        if match:
+            raw_names = match.group(1)
+        
+            names_list = re.split(r',| dan ', raw_names)
+            
+            co_defendants = []
+            for name in names_list:
+                clean_name = ' '.join(name.split()).strip().rstrip(',;')
+                if clean_name and len(clean_name) > 2:
+                    co_defendants.append(clean_name)
+
+            if co_defendants:
+                self._add_field("who", "co_defendants", co_defendants, 0.8)
+                self.log(f" ✅ Co-Defendants: {len(co_defendants)} names found")
+
+
+    # =========== WHY ==============
+    def extract_why(self):
+        # Reasoning Evidence
+        evidence_disposition = []
+        reasoning_evidence_list = []
+
+        status_keywords = r'(dirampas untuk dimusnahkan|dikembalikan ke pada terdakwa|dirampas untuk negara|dimusnahkan|dipergunakan dalam perkara lain|tetap terlampir dalam berkas perkara)'
+
+        segments = re.split(status_keywords, self.text, flags=re.IGNORECASE)
+
+        for i in range(0, len(segments) - 1, 2):
+            full_block = segments[i]
+            current_status = segments[i+1].strip().lower()
+            
+            reasoning_pattern = r'(Menimbang,\s+bahwa\s+terhadap\s+barang\s+bukti[\s\S]+?)(?=1\)\s+|$)'
+            reason_match = re.search(reasoning_pattern, full_block, re.IGNORECASE)
+            
+            current_reasoning = ""
+            if reason_match:
+                current_reasoning = re.sub(r'\s+', ' ', reason_match.group(1)).strip()
+                if current_reasoning not in reasoning_evidence_list:
+                    reasoning_evidence_list.append(current_reasoning)
+
+            # --- EKSTRAKSI ITEM BARANG ---
+            header_pattern = r'barang\s+bukti[\s\S]+?sebagai\s+berikut\s*[:\.]'
+            header_match = re.search(header_pattern, full_block, re.IGNORECASE)
+            
+            if header_match:
+                list_text = full_block[header_match.end():]
+            else:
+                list_text = full_block
+
+            item_matches = re.finditer(r'(\d+)\)\s+([\s\S]+?)(?=\s+\d+\)|$)', list_text)
+            
+            for m in item_matches:
+                desc = re.sub(r'\s+', ' ', m.group(2)).strip().rstrip('.')
+                
+                if len(desc) > 3 and not desc.lower().startswith(("bahwa", "menimbang", "kuhp")):
+                    evidence_disposition.append({
+                        "unit": desc,
+                        "disposition": current_status,
+                        "reasoning": current_reasoning
+                    })
+
+        if evidence_disposition:
+            if reasoning_evidence_list:
+                full_reasoning = " ".join(reasoning_evidence_list)
+                self._add_field("why", "reasoning_evidence", full_reasoning[:500], 0.90)
+                
+            self.log(f" ✅ Evidence Disposition & Reasoning found")
+
+        # reasoning appeal
+        reasoning_appeal = []
+
+        appeal_patterns = [
+            r'Menimbang,\s+bahwa\s+(?:memori\s+banding|pertimbangan\s+Hakim\s+Tingkat\s+Pertama)[\s\S]+?(?=MENGADILI|Mengingat|$)',
+            r'Menimbang,\s+bahwa\s+berdasarkan\s+pertimbangan\s+di\s+atas,\s+maka\s+Putusan\s+Pengadilan[\s\S]+?(?=MENGADILI|$)'
+        ]
+
+        for pattern in appeal_patterns:
+            match = re.search(pattern, self.text, re.IGNORECASE)
+            if match:
+                text_reasoning = re.sub(r'\s+', ' ', match.group(0)).strip()
+                
+                disposition_type = "menguatkan"
+                if re.search(r'perlu\s+diperbaiki|dibatalkan|tidak\s+sependapat', text_reasoning, re.IGNORECASE):
+                    disposition_type = "mengubah/membatalkan"
+                
+                reasoning_appeal.append({
+                    "reasoning": text_reasoning[:1000],  
+                    "appeal_status": disposition_type
+                })
+                break
+
+        if reasoning_appeal:
+            self._add_field("why", "reasoning_appeal", reasoning_appeal, 0.90)
+            self.log(f" ✅ Appeal Reasoning found")
+
+        # motivation factors
+        motivation_factors = []
+
+        motivation_patterns = [
+            {
+                "category": "ideologi",
+                "regex": r'([^.;]*?(?:baiat|jihad|khilafah|daulah|syariat|daulah islamiah|hijrah|thogut)[^.;]*?)(?=[.;]|$)'
+            },
+            {
+                "category": "personal",
+                "regex": r'([^.;]*?(?:ekonomi|keluarga|ajakan|diajak|pengaruh|balas dendam|kecewa|mencari)[^.;]*?)(?=[.;]|$)'
+            }
+        ]
+
+        for p in motivation_patterns:
+            matches = re.finditer(p["regex"], self.text, re.IGNORECASE)
+            for match in matches:
+                factor_text = match.group(1).strip()
+             
+                if len(factor_text) > 20:
+                    motivation_factors.append({
+                        "factor_type": p["category"],
+                        "description": re.sub(r'\s+', ' ', factor_text).strip()
+                    })
+
+        unique_motivation = { (f['factor_type'], f['description']): f for f in motivation_factors }.values()
+
+        if unique_motivation:
+            self._add_field("why", "motivation_factors", list(unique_motivation)[:5], 0.85)
+            self.log(f" ✅ Motivation Factors found: {len(unique_motivation)} factors")
+
+        
+
+    # ============ How Much ============
+    def extract_how_much(self):
+        # imprisonment duration
+        prison_patterns = [
+            r'pidana\s+penjara\s+selama\s+(\d+)\s+\([^\)]+\)\s+tahun(?:\s+dan\s+(\d+)\s+\([^\)]+\)\s+bulan)?',
+            r'penjara\s+selama\s+(\d+)\s+tahun',
+            r'dipidana\s+penjara\s+(\d+)\s+tahun'
+        ]
+
+        for pattern in prison_patterns:
+            match = re.search(pattern, self.text, re.IGNORECASE)
+            if match:
+                years = int(match.group(1))
+                months = int(match.group(2)) if len(match.groups()) > 1 and match.group(2) else 0
+                
+                sentence = {"years": years, "months": months}
+                self._add_field("how_much", "imprisonment_duration", sentence, 0.95)
+                self.log(f"  ✅ Prison: {years} years" + (f" {months} months" if months else ""))
+                break
+
+        # monetary penalties
+        fine_pattern = r'denda\s+(?:sejumlah|sebesar)?\s*Rp\.?\s*(\d+(?:\.\d{3})*(?:,\d+)?)-?'
+
+        # Biaya perkara
+        court_cost_pattern = r'biaya\s+perkara\s+(?:sejumlah|sebesar|ditetapkan)?\s*Rp\.?\s*(\d+(?:\.\d{3})*(?:,\d+)?)-?'
+
+        # Uang pengganti
+        restitution_pattern = r'uang\s+pengganti\s+(?:sejumlah|sebesar)?\s*Rp\.?\s*(\d+(?:\.\d{3})*(?:,\d+)?)-?'
+
+        for field, pattern in [
+            ("monetary penalties", fine_pattern),
+            ("court_cost", court_cost_pattern),
+            ("restitution", restitution_pattern)
+        ]:
+            matches = re.findall(pattern, self.text, re.IGNORECASE)
+            if matches:
+                values = []
+                for m in matches:
+                    try:
+                        val = int(float(m.replace('.', '').replace(',', '.')))
+                        values.append(val)
+                    except ValueError:
+                        continue
+                if values:
+                    self._add_field("how_much", field, max(values), 0.95)
+                    self.log(f"  ✅ {field}: Rp {max(values):,}")
+
+        # seized money amount
+        seized_patterns = [
+            r'(?:uang\s+tunai|uang\s+cash)\s+(?:sejumlah|sebesar)?\s*Rp\.?\s*(\d+(?:\.\d{3})*(?:,\d+)?)-?',
+            r'dirampas\s+untuk\s+(?:negara|kas\s+negara)[^Rp]{0,50}Rp\.?\s*(\d+(?:\.\d{3})*(?:,\d+)?)-?',
+            r'(?:menerima|mengirim|mentransfer|mengirimkan)\s+(?:uang\s+)?(?:sejumlah|sebesar)?\s*Rp\.?\s*(\d+(?:\.\d{3})*(?:,\d+)?)-?',
+            r'(?:pendanaan|dana)\s+(?:sejumlah|sebesar)?\s*Rp\.?\s*(\d+(?:\.\d{3})*(?:,\d+)?)-?',
+        ]
+
+        seized_amounts = []
+        for pattern in seized_patterns:
+            for match in re.finditer(pattern, self.text, re.IGNORECASE):
+                try:
+                    val = int(float(match.group(1).replace('.', '').replace(',', '.')))
+                    seized_amounts.append(val)
+                except ValueError:
+                    continue
+
+        if seized_amounts:
+            self._add_field("how_much", "seized_money_amount", seized_amounts, 0.85)
+            self.log(f"  ✅ Seized Money: {seized_amounts}")
+        else:
+            self.log("  ⚠️ Seized Money: tidak ditemukan")
+
+
+    def extract_how_many(self):
+        # defendant count
+        name_labels = re.findall(
+            r'(?:Nama\s+Lengkap|Nama\s*:)',
+            self.text, re.IGNORECASE
+        )
+        defendant_count = len(name_labels) if name_labels else 1
+
+        if defendant_count <= 1:
+            multi = re.findall(
+                r'Terdakwa\s+(?:I|II|III|IV|V|ke-?\d+)\b',
+                self.text, re.IGNORECASE
+            )
+            if multi:
+                defendant_count = len(set(multi))  # deduplikasi
+
+        self._add_field("how_many", "defendant_count", defendant_count, 0.9)
+        self.log(f"  ✅ Defendant Count: {defendant_count}")
+
+        # charge count
+        charges = set()
+
+        dakwaan_text = self._extract_dakwaan_block()
+
+        if not dakwaan_text:
+            self.log("  ⚠ Dakwaan block not found")
+            return
+
+        article_pattern = re.compile(
+            r'Pasal\s+(\d+)'
+            r'(?:\s+Ayat\s+\((\d+)\))?'
+            r'(?:\s+huruf\s+([a-z]))?',
+            re.IGNORECASE
+        )
+
+        for match in article_pattern.finditer(dakwaan_text):
+            article = f"Pasal {match.group(1)}"
+
+            if match.group(2):
+                article += f" Ayat ({match.group(2)})"
+
+            if match.group(3):
+                article += f" huruf {match.group(3)}"
+
+            charges.add(article)
+
+        if charges:
+            charges = sorted(charges)
+            self._add_field("what", "charges", charges, 0.97)
+            self._add_field("how_many", "charge_count", len(charges), 0.97)
+            self.log(f"  ✅ Charges: {len(charges)} pasal didakwakan")
+
+
     def extract_all(self) -> Dict:
         """Extract all categories and return complete data"""
         self.log("="*60)
@@ -1083,6 +1455,9 @@ class ImprovedCourtDecisionExtractor:
         self.extract_when()
         self.extract_where()
         self.extract_who()
+        self.extract_why()
+        self.extract_how_much()
+        self.extract_how_many()
         
         self.log("\n" + "="*60)
         self.log("EXTRACTION COMPLETE")
@@ -1175,8 +1550,8 @@ if __name__ == "__main__":
         output_file = sys.argv[2] if len(sys.argv) > 2 else "extraction_result_v2.json"
     else:
         # Default test
-        input_file = "../Cleaned-Doc/putusan_teroris.txt"
-        output_file = "../extract_result_teroris.json"
+        input_file = "../teroris-test/teroris-2.txt"
+        output_file = "../teroris-test/teroris-2.json"
     
     print(f"📄 Input: {input_file}")
     print(f"💾 Output: {output_file}\n")
